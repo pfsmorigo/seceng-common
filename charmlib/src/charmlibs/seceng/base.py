@@ -21,6 +21,7 @@ import ops
 import pydantic
 import yaml
 from ops.model import ActiveStatus, MaintenanceStatus
+from pydantic_core import PydanticCoreSchema, core_schema
 
 from . import utils
 
@@ -42,6 +43,9 @@ class DebconfConfig:
     package: str
     template: str
 
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type: typing.Any, handler) -> PydanticCoreSchema:
+        return core_schema.is_instance_schema(cls)
 
 @dataclasses.dataclass(kw_only=True)
 class FileConfig:
