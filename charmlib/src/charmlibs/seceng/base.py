@@ -83,10 +83,7 @@ class SecEngCharmBase(ops.CharmBase):
     creating files from juju secrets.
     """
 
-    package_install_ppa = 'ubuntu-security-infra'
-    package_install_list: list[Package] = []
-    snap_install_list: list[Snap] = []
-
+    install_list: list[Union[Package, Snap]] = []
     secrets_config: str | None = None
 
     _stored = ops.StoredState()  # type: ignore[no-untyped-call]
@@ -99,8 +96,7 @@ class SecEngCharmBase(ops.CharmBase):
         self._stored.set_default(configured_ppa='', installed_packages=set())
 
     def _seceng_base_on_config_changed(self, event: ops.ConfigChangedEvent) -> None:
-        self._install_ppa_and_packages()
-        self._install_snaps()
+        self._install_binaries()
         self._install_secrets()
         self.unit.status = ActiveStatus('ready')
 
@@ -108,25 +104,28 @@ class SecEngCharmBase(ops.CharmBase):
         if event.secret.id is not None:
             self._install_secrets(filter_secrets={event.secret.id})
 
-    def _install_ppa_and_packages(self) -> None:
-        for package in self.package_install_list:
-            new_ppa = f'ppa:{package.ppa}/{self.config["deployment"]}'
-            if new_ppa != typing.cast(str, self._stored.configured_ppa):
-                self.unit.status = MaintenanceStatus('Configuring PPA')
-                self._stored.configured_ppa = new_ppa
-                subprocess.check_call(["add-apt-repository", new_ppa])
-                subprocess.check_call(["apt-get", "update"])
-                self._stored.installed_packages = set()  # Force reinstallation of packages when PPA changes.
+    def _install_binaries(self) -> None:
+        for binary in self.install_list:
+            if isinstance(binary, Package):
+                new_ppa = f'ppa:{binary.ppa}/{self.config["deployment"]}'
+                if new_ppa != typing.cast(str, self._stored.configured_ppa):
+                    self.unit.status = MaintenanceStatus(f'Configuring PPA {new_ppa}')
+                    self._stored.configured_ppa = new_ppa
+                    subprocess.check_call(['add-apt-repository', new_ppa])
+                    subprocess.check_call(['apt-get', 'update'])
+                    self._stored.installed_packages = set()  # Force reinstallation of packages when PPA changes.
 
-            if set(self.package_install_list) != typing.cast(set[str], self._stored.installed_packages):
-                self._stored.installed_packages = set(self.package_install_list)
-                self.unit.status = MaintenanceStatus(f'Installing Debian Package: {package.name}')
-                subprocess.check_call(["apt-get", "install", "-y", package.name])
+                if set(self.install_list) != typing.cast(set[str], self._stored.installed_packages):
+                    self._stored.installed_packages = set(self.install_list)
+                    self.unit.status = MaintenanceStatus(f'Installing Debian Package: {binary.name}')
+                    subprocess.check_call(['apt-get', 'install', '-y', binary.name])
 
-    def _install_snaps(self) -> None:
-        for snap in self.snap_install_list:
-            self.unit.status = MaintenanceStatus('Installing Snap: {snap.name} {snap.channel}')
-            subprocess.check_call(["snap", "install", "--channel", snap.channel, snap.name])
+            elif isinstance(binary, Snap):
+                self.unit.status = MaintenanceStatus('Installing Snap: {binary.name} {binary.channel}')
+                subprocess.check_call(['snap', 'install', '--channel', binary.channel, binary.name])
+
+            else:
+                logging.error(f"Can't install binary from {binary.__class__.__name__} class")
 
     def _install_secrets(self, *, filter_secrets: set[str] = set()) -> None:
         # This method should not be called on the install or upgrade hook,
